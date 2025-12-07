@@ -1,0 +1,488 @@
+import os
+import json
+import csv
+import re
+import sqlite3
+from datetime import datetime
+from pathlib import Path
+
+from flask import (
+    Flask,
+    render_template,
+    request,
+    redirect,
+    url_for,
+    jsonify,
+    g,
+)
+from dotenv import load_dotenv
+import requests
+from huggingface_hub import InferenceClient
+
+# ========= PATHS & CONFIG =========
+
+BASE_DIR = Path(__file__).resolve().parent
+DB_PATH = BASE_DIR / "bharatlens.db"
+
+DATA_PATH = BASE_DIR / "data" / "bus_routes.json"
+KSRTC_CSV_PATH = BASE_DIR / "data" / "ksrtc_routes.csv"
+BMTC_KBS_CSV_PATH = BASE_DIR / "data" / "bmtc_kbs_routes.csv"
+
+load_dotenv()
+HF_API_TOKEN = os.getenv("HF_API_TOKEN")
+
+hf_client = InferenceClient(api_key=HF_API_TOKEN) if HF_API_TOKEN else None
+
+# Model IDs (swap to other router-supported models if needed)
+OCR_MODEL = "microsoft/trocr-small-printed"
+LLM_MODEL = "mistralai/Mistral-7B-Instruct-v0.2"
+TTS_EN = "facebook/mms-tts-eng"
+TTS_HI = "facebook/mms-tts-hin"
+TTS_KN = "facebook/mms-tts-kan"
+
+BMTC_ETA_URL = "http://bmtcmob.hostg.in/api/itsroutewise/details"
+
+app = Flask(__name__)
+app.config["UPLOAD_FOLDER"] = BASE_DIR / "static" / "audio"
+app.config["UPLOAD_FOLDER"].mkdir(parents=True, exist_ok=True)
+
+# ========= DATABASE =========
+
+
+def get_db():
+    if "db" not in g:
+        g.db = sqlite3.connect(DB_PATH)
+        g.db.row_factory = sqlite3.Row
+    return g.db
+
+
+@app.teardown_appcontext
+def close_db(exc):
+    db = g.pop("db", None)
+    if db:
+        db.close()
+
+
+def init_db():
+    db = get_db()
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS scan_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL,
+            route_no TEXT,
+            language TEXT,
+            city TEXT,
+            raw_text TEXT,
+            final_response TEXT
+        );
+        """
+    )
+    db.commit()
+
+
+with app.app_context():
+    init_db()
+
+# ========= DATA LOADERS =========
+
+
+def load_ksrtc_from_csv(path: Path):
+    routes = []
+    if not path.exists():
+        return routes
+
+    try:
+        with open(path, "r", encoding="utf-8-sig") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                route_no = (row.get("ROUTE_NO") or "").strip()
+                if not route_no:
+                    continue
+                origin = (row.get("ORIGIN") or "").strip()
+                dest = (row.get("DESTINATION") or "").strip()
+                first_dep = (row.get("FIRST_DEP") or "06:00").strip()
+                last_dep = (row.get("LAST_DEP") or "22:00").strip()
+                try:
+                    freq = int(row.get("FREQ_MIN") or 30)
+                except ValueError:
+                    freq = 30
+
+                routes.append(
+                    {
+                        "route_no": route_no,
+                        "operator": "KSRTC",
+                        "city": "Karnataka",
+                        "from": origin or "Unknown",
+                        "to": dest or "Unknown",
+                        "first_bus": first_dep,
+                        "last_bus": last_dep,
+                        "frequency_minutes": freq,
+                        "stops": [],
+                    }
+                )
+    except Exception as e:
+        print("Error loading KSRTC CSV:", e)
+
+    return routes
+
+
+def load_bmtc_from_csv(path: Path):
+    """
+    Load BMTC Kempegowda Bus Stand (KBS) dataset.
+    Headers:
+    SL No.,Platform ,Bus Route,Starting From,Destination,VIA
+    """
+    routes = []
+    if not path.exists():
+        return routes
+
+    try:
+        with open(path, "r", encoding="utf-8-sig") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                route_no = (row.get("Bus Route") or "").strip()
+                if not route_no:
+                    continue
+
+                start = (row.get("Starting From") or "").strip()
+                dest = (row.get("Destination") or "").strip()
+                via = (row.get("VIA") or "").strip()
+                stops = [s.strip() for s in via.split(",") if s.strip()]
+
+                routes.append(
+                    {
+                        "route_no": route_no,
+                        "operator": "BMTC",
+                        "city": "Bengaluru",
+                        "from": start or "Kempegowda Bus Stand",
+                        "to": dest or "Unknown",
+                        "first_bus": "06:00",
+                        "last_bus": "22:00",
+                        "frequency_minutes": 15,
+                        "stops": stops,
+                    }
+                )
+    except Exception as e:
+        print("Error loading BMTC KBS CSV:", e)
+
+    print(f"Loaded {len(routes)} BMTC KBS routes from CSV")
+    return routes
+
+
+def load_bus_data():
+    base_routes = []
+    if DATA_PATH.exists():
+        with open(DATA_PATH, "r", encoding="utf-8") as f:
+            base_routes = json.load(f)
+
+    ksrtc_routes = load_ksrtc_from_csv(KSRTC_CSV_PATH)
+    bmtc_routes = load_bmtc_from_csv(BMTC_KBS_CSV_PATH)
+
+    all_routes = base_routes + ksrtc_routes + bmtc_routes
+    print(f"Total routes loaded: {len(all_routes)}")
+    return all_routes
+
+
+BUS_DATA = load_bus_data()
+
+# ========= LOOKUP =========
+
+
+def lookup_bus_route(route_no: str):
+    if not route_no:
+        return None
+    rn = route_no.lower().strip()
+    for r in BUS_DATA:
+        if r.get("route_no", "").lower() == rn:
+            return r
+    return None
+
+# ========= BMTC ETA =========
+
+
+def fetch_bmtc_eta(route_no: str, direction: int = 1):
+    try:
+        if not route_no:
+            return None
+
+        payload = {"direction": str(direction), "routeNO": str(route_no)}
+        resp = requests.post(BMTC_ETA_URL, json=payload, timeout=10)
+
+        if resp.status_code != 200:
+            print("BMTC ETA HTTP error:", resp.status_code, resp.text[:200])
+            return None
+
+        try:
+            data = resp.json()
+        except Exception:
+            return None
+
+        if isinstance(data, list) and data:
+            first = data[0]
+            if isinstance(first, dict):
+                for key in ("eta", "ETA", "eta_min", "ETAMinutes"):
+                    if key in first:
+                        return first[key]
+        return None
+    except Exception as e:
+        print("BMTC ETA error:", e)
+        return None
+
+# ========= HF HELPERS (router) =========
+
+
+def hf_ocr_image(image_bytes: bytes) -> str:
+    if not hf_client:
+        return ""
+
+    try:
+        out = hf_client.image_to_text(image_bytes, model=OCR_MODEL)
+        if isinstance(out, list) and out:
+            return (out[0].get("generated_text") or out[0].get("answer") or "").strip()
+        if isinstance(out, dict):
+            return (out.get("generated_text") or out.get("answer") or "").strip()
+    except Exception as e:
+        print("HF OCR error (router):", e)
+
+    return ""
+
+
+def hf_generate_text(prompt: str, max_new_tokens: int = 256) -> str:
+    if not hf_client:
+        return prompt
+
+    try:
+        out = hf_client.text_generation(
+            prompt,
+            model=LLM_MODEL,
+            max_new_tokens=max_new_tokens,
+            temperature=0.5,
+            do_sample=True,
+        )
+        if isinstance(out, str):
+            return out.strip()
+    except Exception as e:
+        print("HF text_generation error (router):", e)
+
+    return prompt
+
+
+def hf_tts(text: str, lang: str, output_path: Path) -> bool:
+    if not hf_client:
+        return False
+
+    if lang == "hi":
+        model_id = TTS_HI
+    elif lang == "kn":
+        model_id = TTS_KN
+    else:
+        model_id = TTS_EN
+
+    try:
+        audio_bytes = hf_client.text_to_speech(text, model=model_id)
+        with open(output_path, "wb") as f:
+            f.write(audio_bytes)
+        return True
+    except Exception as e:
+        print("HF_TTS error (router):", e)
+        return False
+
+# ========= AI ROUTINES =========
+
+
+def analyze_image_and_extract(image_bytes: bytes) -> dict:
+    """
+    OCR + LLM JSON structuring.
+    """
+    raw_text = hf_ocr_image(image_bytes)
+
+    instruction = """
+Return strictly JSON only with keys:
+"raw_text", "route_no", "city", "source", "destination".
+If unsure, leave fields blank.
+OCR text:
+"""
+    prompt = f"{instruction}\n\"\"\"{raw_text}\"\"\""
+
+    generated = hf_generate_text(prompt)
+    result = {
+        "raw_text": raw_text,
+        "route_no": "",
+        "city": "",
+        "source": "",
+        "destination": "",
+    }
+
+    try:
+        json_match = re.search(r"\{.*\}", generated, re.DOTALL)
+        if json_match:
+            parsed = json.loads(json_match.group(0))
+            for key in result:
+                if key in parsed:
+                    result[key] = parsed[key]
+    except Exception:
+        pass
+
+    # Fallback regex for route no
+    if not result["route_no"]:
+        m = re.search(r"\b(\d{1,4}[A-Za-z-]*)\b", raw_text)
+        if m:
+            result["route_no"] = m.group(1)
+
+    return result
+
+
+def format_bus_response(route_info: dict, lang: str) -> str:
+    lang_name = {"en": "English", "hi": "Hindi", "kn": "Kannada"}.get(lang, "English")
+
+    if not route_info:
+        base = "I could not find this bus route. Please try another image or route number."
+    elif "error" in route_info:
+        base = route_info["error"]
+    else:
+        base = (
+            f"Bus route {route_info['route_no']} operates in {route_info['city']}. "
+            f"It runs from {route_info['from']} to {route_info['to']}. "
+            f"The first bus is at {route_info['first_bus']} and the last bus is at {route_info['last_bus']}. "
+            f"Average frequency is every {route_info['frequency_minutes']} minutes."
+        )
+        eta = route_info.get("eta_minutes")
+        if eta is not None:
+            base += f" The next bus is expected in about {eta} minutes."
+
+    sys_prompt = f"""
+Rewrite this message for a commuter in {lang_name}.
+Use 2–3 short, simple sentences and avoid technical words.
+Message:
+\"\"\"{base}\"\"\"
+"""
+    text = hf_generate_text(sys_prompt, 128)
+    return text or base
+
+# ========= SHARED RESPONSE BUILDER =========
+
+
+def build_route_response(route_no: str, lang: str, raw_text: str = "", city_hint: str = ""):
+    route_info = lookup_bus_route(route_no)
+    city = city_hint
+
+    if route_info is None:
+        route_info = {"error": "Route not found in dataset.", "route_no": route_no, "city": city}
+    else:
+        city = route_info.get("city", city)
+
+    if route_info.get("operator", "").upper() == "BMTC":
+        eta = fetch_bmtc_eta(route_no)
+        if eta is not None:
+            route_info["eta_minutes"] = eta
+
+    final_text = format_bus_response(route_info, lang)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    audio_filename = f"bharatlens_{timestamp}.mp3"
+    audio_path = app.config["UPLOAD_FOLDER"] / audio_filename
+    audio_ok = hf_tts(final_text, lang, audio_path)
+    audio_url = None
+    if audio_ok and audio_path.exists():
+        audio_url = url_for("static", filename=f"audio/{audio_filename}")
+
+    db = get_db()
+    db.execute(
+        "INSERT INTO scan_logs (created_at, route_no, language, city, raw_text, final_response) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (datetime.utcnow().isoformat(), route_no, lang, city, raw_text, final_text),
+    )
+    db.commit()
+
+    return {
+        "route_info": route_info,
+        "final_text": final_text,
+        "audio_url": audio_url,
+        "raw_text": raw_text,
+        "city": city,
+    }
+
+# ========= ROUTES =========
+
+
+@app.route("/")
+def index():
+    return render_template("index.html")
+
+
+@app.route("/analyze", methods=["POST"])
+def analyze():
+    """
+    Image/camera flow.
+    """
+    file = request.files.get("image")
+    lang = request.form.get("target_lang", "en")
+
+    if not file:
+        return "No image uploaded", 400
+
+    image_bytes = file.read()
+
+    data = analyze_image_and_extract(image_bytes)
+    route_no = data.get("route_no", "")
+    city = data.get("city", "")
+    raw_text = data.get("raw_text", "")
+
+    resp = build_route_response(route_no, lang, raw_text=raw_text, city_hint=city)
+
+    return render_template(
+        "result.html",
+        raw_text=resp["raw_text"],
+        route_no=route_no,
+        city=resp["city"],
+        route_info=resp["route_info"],
+        final_text=resp["final_text"],
+        audio_file=resp["audio_url"],
+        target_lang=lang,
+    )
+
+
+@app.route("/route-search", methods=["POST"])
+def route_search():
+    """
+    Manual route number search (no image).
+    """
+    route_no = request.form.get("route_no", "").strip()
+    lang = request.form.get("target_lang_search", "en")
+
+    if not route_no:
+        return redirect(url_for("index"))
+
+    raw_text = f"Manual route search for {route_no}"
+    resp = build_route_response(route_no, lang, raw_text=raw_text, city_hint="")
+
+    return render_template(
+        "result.html",
+        raw_text=resp["raw_text"],
+        route_no=route_no,
+        city=resp["city"],
+        route_info=resp["route_info"],
+        final_text=resp["final_text"],
+        audio_file=resp["audio_url"],
+        target_lang=lang,
+    )
+
+
+@app.route("/history")
+def history():
+    db = get_db()
+    rows = db.execute("SELECT * FROM scan_logs ORDER BY id DESC LIMIT 50").fetchall()
+    return render_template("history.html", rows=rows)
+
+
+@app.route("/api/bus/<route_no>")
+def api_bus(route_no):
+    info = lookup_bus_route(route_no)
+    if not info:
+        return jsonify({"error": "Route not found"}), 404
+    return jsonify(info)
+
+
+if __name__ == "__main__":
+    app.run(debug=True)
