@@ -310,29 +310,8 @@ Every `/analyze` call inserts a row.
 
 ---
 
-## 9. Push to GitHub (for Buildathon)
 
-From inside `bharatlens_hf_web`:
-
-```bash
-git init
-git add .
-git commit -m "Initial BharatLens Hugging Face web app"
-```
-
-Create a repo on GitHub, then:
-
-```bash
-git remote add origin https://github.com/<your-username>/bharatlens_hf_web.git
-git branch -M main
-git push -u origin main
-```
-
-Now judges/teammates can clone and run it.
-
----
-
-## 10. Demo Checklist
+## 9. Demo Checklist
 
 - [ ] Hugging Face token configured in `.env`  
 - [ ] `python app.py` runs without errors  
@@ -342,13 +321,11 @@ Now judges/teammates can clone and run it.
 - [ ] README updated with your GitHub URL and screenshots  
 
 ---
+## 10. Sreen shots
 
-## 11. Possible Extensions
-
-- Replace/augment `data/bus_routes.json` with **real-time open data APIs** (BMTC, KSRTC, etc.)
-- Add **live camera capture** in browser (for mobile users)
-- Add user accounts & “favourite routes”
-- Add support for more Indian languages with MMS TTS
+<img width="1920" height="1020" alt="Image" src="https://github.com/user-attachments/assets/4c5767b1-1980-4f5c-89e8-113fcaa22dbc" />
+<img width="1920" height="1020" alt="Image" src="https://github.com/user-attachments/assets/c4e7b22f-33bc-4c54-a30b-19cb18b5406c" />
+<img width="1920" height="1020" alt="Image" src="https://github.com/user-attachments/assets/e1725bfb-ddb7-4e12-8266-35e55d5816c1" />
 
 ---
 
