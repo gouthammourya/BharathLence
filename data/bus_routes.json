@@ -1,0 +1,69 @@
+[
+  {
+    "route_no": "356D",
+    "operator": "BMTC",
+    "city": "Bengaluru",
+    "from": "Majestic",
+    "to": "Electronic City",
+    "first_bus": "05:15",
+    "last_bus": "22:30",
+    "frequency_minutes": 12,
+    "stops": [
+      "Majestic",
+      "Corporation",
+      "Shantinagar",
+      "Silk Board",
+      "Electronic City"
+    ]
+  },
+  {
+    "route_no": "500D",
+    "operator": "BMTC",
+    "city": "Bengaluru",
+    "from": "Banashankari",
+    "to": "ITPL",
+    "first_bus": "05:30",
+    "last_bus": "23:00",
+    "frequency_minutes": 15,
+    "stops": [
+      "Banashankari",
+      "Jayadeva",
+      "Silk Board",
+      "Marathahalli",
+      "ITPL"
+    ]
+  },
+  {
+    "route_no": "K1",
+    "operator": "KSRTC",
+    "city": "Karnataka",
+    "from": "Mysuru",
+    "to": "Bengaluru",
+    "first_bus": "04:45",
+    "last_bus": "23:15",
+    "frequency_minutes": 30,
+    "stops": [
+      "Mysuru",
+      "Maddur",
+      "Mandya",
+      "Ramanagara",
+      "Bengaluru"
+    ]
+  },
+  {
+    "route_no": "218",
+    "operator": "TSRTC",
+    "city": "Hyderabad",
+    "from": "Secunderabad",
+    "to": "Uppal",
+    "first_bus": "05:00",
+    "last_bus": "22:45",
+    "frequency_minutes": 10,
+    "stops": [
+      "Secunderabad",
+      "Mettuguda",
+      "Tarnaka",
+      "Uppal"
+    ]
+  }
+]

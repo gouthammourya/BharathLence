@@ -1,0 +1,111 @@
+/* ===== GLOBAL ===== */
+
+body {
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: #0e1117;
+  color: #ffffff;
+}
+
+/* Smooth edges */
+img, video, canvas {
+  border-radius: 0.75rem;
+}
+
+/* ===== GLASS CARD ===== */
+
+.card-glass {
+  background: rgba(33, 37, 41, 0.9);
+  /* Safari may not support backdrop-filter; it just ignores it */
+  backdrop-filter: blur(12px);
+  border-radius: 1.25rem;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow:
+    0 8px 25px rgba(0, 0, 0, 0.7),
+    inset 0 0 8px rgba(255, 255, 255, 0.04);
+}
+
+/* ===== HEADINGS ===== */
+
+h1, h5 {
+  letter-spacing: 0.03em;
+  font-weight: 600;
+}
+
+/* ===== INPUTS ===== */
+
+.form-control,
+.form-select {
+  background-color: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: #ffffff;
+  border-radius: 0.75rem;
+}
+
+.form-control:focus,
+.form-select:focus {
+  background-color: rgba(255, 255, 255, 0.12);
+  border-color: #8ab4f8;
+  color: #ffffff;
+  box-shadow: 0 0 0 0.15rem rgba(138, 180, 248, 0.45);
+}
+
+/* ===== BUTTONS ===== */
+
+.btn-primary {
+  background-color: #3b82f6;
+  border-color: #3b82f6;
+  border-radius: 0.75rem;
+  font-weight: 500;
+}
+
+.btn-primary:hover {
+  background-color: #2563eb;
+  border-color: #2563eb;
+}
+
+.btn-outline-primary,
+.btn-outline-light,
+.btn-outline-secondary {
+  border-radius: 0.75rem;
+  font-weight: 500;
+}
+
+/* ===== AUDIO PLAYER ===== */
+
+audio {
+  width: 100%;
+  border-radius: 0.75rem;
+}
+
+/* ===== TABLES ===== */
+
+table {
+  border-radius: 0.75rem;
+  overflow: hidden;
+}
+
+table td, table th {
+  vertical-align: middle;
+}
+
+/* ===== SPACING ===== */
+
+.card-glass p,
+.card-glass ul {
+  margin-bottom: 0.5rem;
+}
+
+.form-text {
+  opacity: 0.7;
+}
+
+/* ===== RESPONSIVE ===== */
+
+@media (max-width: 768px) {
+  h1 {
+    font-size: 1.7rem;
+  }
+  .card-glass {
+    padding: 1rem;
+  }
+}
