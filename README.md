@@ -321,7 +321,7 @@ Every `/analyze` call inserts a row.
 - [ ] README updated with your GitHub URL and screenshots  
 
 ---
-## 10. Sreen shots
+## 10. Screen shots
 
 <img width="1920" height="1020" alt="Image" src="https://github.com/user-attachments/assets/4c5767b1-1980-4f5c-89e8-113fcaa22dbc" />
 <img width="1920" height="1020" alt="Image" src="https://github.com/user-attachments/assets/c4e7b22f-33bc-4c54-a30b-19cb18b5406c" />
